@@ -48,7 +48,7 @@ This guarantees **zero risk of double-locking** the same `resourceId` across two
 **Domain layer:**
 - `DistributedLock`
 - `DistributedLockManager`
-- `LockVersionAccessor`
+- `DistributedLockVersionAccessor`
 
 **Infrastructure layer (pluggable):**
 - ZooKeeper backend
@@ -65,9 +65,10 @@ This guarantees **zero risk of double-locking** the same `resourceId` across two
 ### ✔ REST API (current)
 Examples:
 ```
-POST /locks/{resource}/{id}/acquire?timeoutMs=5000
-POST /locks/{resource}/{id}/release
-GET /locks/{resource}/held
+POST /api/v1/locks/{resource}/{id}/acquire?timeoutMs=5000
+POST /api/v1/locks/{resource}/{id}/release
+GET /api/v1/locks/{resource}/version
+GET /api/v1/locks/held
 ```
 
 ---
@@ -188,7 +189,7 @@ This enables embedding inside other systems (routing engines, schedulers, state 
 
 ---
 
-Contributing
+## Contributing
 
 Contributions, proposals, and backend implementations are welcome.
 The repository is intentionally designed to be hackable and easy to extend.
