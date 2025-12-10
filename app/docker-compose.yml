@@ -1,0 +1,82 @@
+version: '3.9'
+
+services:
+  zookeeper:
+    image: zookeeper:3.9
+    container_name: zk
+    restart: unless-stopped
+    environment:
+      ZOO_MY_ID: 1
+      ZOO_SERVERS: server.1=zk:2888:3888;2181
+      ZOO_TICK_TIME: 2000
+      ZOO_INIT_LIMIT: 10
+      ZOO_SYNC_LIMIT: 5
+      ZOO_STANDALONE_ENABLED: 'true'
+      ZOO_ADMINSERVER_ENABLED: 'true'
+    ports:
+      - '2181:2181'
+      - '8080:8080' # admin-server (optional)
+    networks:
+      - zk-net
+
+  zoonavigator:
+    image: elkozmon/zoonavigator:latest
+    container_name: zoonavigator
+    restart: unless-stopped
+    environment:
+      HTTP_PORT: 9000
+      CONNECTION_ZK_SERVERS: zk:2181
+    ports:
+      - '9000:9000'
+    depends_on:
+      - zookeeper
+    networks:
+      - zk-net
+
+  lock-app-base:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: my-lock-app:latest
+
+  app1:
+    image: my-lock-app:latest
+    container_name: lock-app-1
+    restart: unless-stopped
+    environment:
+      # Spring Boot
+      SERVER_PORT: 8080
+
+      DISTRIBUTED_LOCK_PROVIDER: zookeeper
+      # ZooKeeper provider
+      DISTRIBUTED_LOCK_ZOOKEEPER_CONNECTION_STRING: zk:2181
+      DISTRIBUTED_LOCK_ZOOKEEPER_ROOT_PATH: /locks/zk-provider
+      # Curator provider
+      # DISTRIBUTED_LOCK_CURATOR_CONNECTION_STRING: zk:2181
+      # DISTRIBUTED_LOCK_CURATOR_ROOT_PATH: /locks/curator-provider
+    ports:
+      - "8079:8080"
+    networks:
+      - zk-net
+
+  app2:
+    image: my-lock-app:latest
+    container_name: lock-app-2
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8080
+      DISTRIBUTED_LOCK_PROVIDER: zookeeper
+      # ZooKeeper provider
+      DISTRIBUTED_LOCK_ZOOKEEPER_CONNECTION_STRING: zk:2181
+      DISTRIBUTED_LOCK_ZOOKEEPER_ROOT_PATH: /locks/zk-provider
+      # Curator provider
+      # DISTRIBUTED_LOCK_CURATOR_CONNECTION_STRING: zk:2181
+      # DISTRIBUTED_LOCK_CURATOR_ROOT_PATH: /locks/curator-provider
+    ports:
+      - "8078:8080"
+    networks:
+      - zk-net
+
+networks:
+  zk-net:
+    external: true

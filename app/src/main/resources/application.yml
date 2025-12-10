@@ -1,0 +1,11 @@
+server:
+  port: 8077
+
+distributed-lock:
+  provider: zookeeper
+  zookeeper:
+    connection-string: localhost:2181
+    root-path: /locks/zk-provider
+  curator:
+    connection-string: localhost:2181
+    root-path: /locks/curator-provider
