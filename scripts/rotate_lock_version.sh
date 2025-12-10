@@ -36,7 +36,6 @@ echo "Waiting for all ephemeral lock nodes under ${OLD_ROOT} to disappear..."
 while true; do
   RAW_RESOURCES=$(echo "ls ${OLD_ROOT}" | zkCli.sh -server "${ZK_ADDR}" 2>/dev/null || true)
 
-  # Берём строку со списком детей, но НЕ промпт [zk: ...]
   RESOURCE_LINE=$(echo "${RAW_RESOURCES}" | grep '^\[' | grep -v 'zk:' | head -n1 || true)
 
   if [[ -z "${RESOURCE_LINE}" ]]; then
