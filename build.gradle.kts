@@ -7,7 +7,7 @@ allprojects {
 subprojects {
     pluginManager.withPlugin("java") {
 
-        group = "io.sagittarius.simplelock"
+        group = "io.sagittarius.clastor.distributedlock"
         version = findProperty("version")?.toString() ?: "1.0-SNAPSHOT"
 
         dependencies {

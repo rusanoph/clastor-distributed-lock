@@ -1,11 +1,13 @@
-server:
-  port: 8077
-
 distributed-lock:
-  provider: zookeeper
+  provider: ${DISTRIBUTED_LOCK_PROVIDER:zookeeper}
   zookeeper:
-    connection-string: localhost:2181
-    root-path: /locks/zk-provider
+    connection-string: ${DISTRIBUTED_LOCK_ZOOKEEPER_CONNECTION_STRING:localhost:2181}
+    root-path: ${DISTRIBUTED_LOCK_ZOOKEEPER_ROOT_PATH:/locks/zk-provider}
+    connection-timeout: ${DISTRIBUTED_LOCK_ZOOKEEPER_CONNECTION_TIMEOUT:5s}
+    session-timeout: ${DISTRIBUTED_LOCK_ZOOKEEPER_SESSION_TIMEOUT:10s}
+    acquire-retry-delay: ${DISTRIBUTED_LOCK_ZOOKEEPER_ACQUIRE_RETRY_DELAY:200ms}
   curator:
-    connection-string: localhost:2181
-    root-path: /locks/curator-provider
+    connection-string: ${DISTRIBUTED_LOCK_CURATOR_CONNECTION_STRING:localhost:2181}
+    root-path: ${DISTRIBUTED_LOCK_CURATOR_ROOT_PATH:/locks/curator-provider}
+    connection-timeout: ${DISTRIBUTED_LOCK_CURATOR_CONNECTION_TIMEOUT:5s}
+    session-timeout: ${DISTRIBUTED_LOCK_CURATOR_SESSION_TIMEOUT:10s}

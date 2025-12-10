@@ -1,4 +1,4 @@
-rootProject.name = "SimpleClastorLock"
+rootProject.name = "clastor-distributed-lock"
 include("domain")
 include("app")
 include("adapter")
