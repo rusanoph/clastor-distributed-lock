@@ -1,4 +1,4 @@
-FROM eclipse-temurin:21-jdk@sha256:8ad118b146aa92da815b576441acd6b42b38236797ad0b6edc8c200b85bb0734 AS build
+FROM eclipse-temurin:25-jdk@sha256:ce2ef9d2d67a68de5e196d4de9d743327c44a10b57fe02ec39f572c652cacfd3 AS build
 WORKDIR /src
 COPY gradlew gradle.properties settings.gradle.kts settings-gradle.lockfile build.gradle.kts LICENSE ./
 COPY gradle/ gradle/
@@ -8,7 +8,7 @@ COPY adapter/ adapter/
 COPY app/ app/
 RUN sh ./gradlew --no-daemon :app:bootJar
 
-FROM eclipse-temurin:21-jre-alpine@sha256:5d7689f47d670aca766b9503a70bccc2d73b4eb9221ae8f714ae958313c4ce70
+FROM eclipse-temurin:25-jre-alpine@sha256:69c2a26e9894016e274c880fa542956d005b3755f84db765145185e87405bd89
 WORKDIR /app
 LABEL org.opencontainers.image.source="https://github.com/rusanoph/clastor-distributed-lock"
 
