@@ -1,7 +1,7 @@
 [versions]
 spring-boot = "4.0.0"
 spring-dependency-management = "1.1.7"
-lombok = "1.18.34"
+lombok = "1.18.48"
 junit = "6.0.1"
 curator = "5.9.0"
 zookeeper = "3.9.7"
