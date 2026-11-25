@@ -4,7 +4,7 @@ spring-dependency-management = "1.1.7"
 lombok = "1.18.34"
 junit = "6.0.1"
 curator = "5.9.0"
-zookeeper = "3.9.4"
+zookeeper = "3.9.7"
 
 [libraries]
 spring-boot-web = { module = "org.springframework.boot:spring-boot-starter-web" }
