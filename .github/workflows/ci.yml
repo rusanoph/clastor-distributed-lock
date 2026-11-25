@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Verify Gradle wrapper
+        run: echo '7d3a4ac4de1c32b59bc6a4eb8ecb8e612ccd0cf1ae1e99f66902da64df296172  gradle/wrapper/gradle-wrapper.jar' | sha256sum --check
+      - run: sh ./gradlew --no-daemon clean build
+      - run: docker compose -f app/docker-compose.yml --profile cluster config --quiet
+      - run: docker compose -f app/docker-compose.yml up --build --detach --wait --wait-timeout 90
+      - name: Check REST lock lifecycle
+        shell: bash
+        run: |
+          api=http://127.0.0.1:8079/api/v1/locks
+          curl --fail --silent --show-error --retry 10 --retry-connrefused "$api/jobs/version" | jq -e '.version == "v1"'
+          curl --fail --silent --show-error -X POST "$api/jobs/acquire?resourceId=ci" | jq -e '.status == "ACQUIRED"'
+          curl --fail --silent --show-error -X POST "$api/jobs/release?resourceId=ci" | jq -e '.status == "RELEASED"'
+      - name: Prepare server JAR with checksum
+        working-directory: app/build/libs
+        run: sha256sum app.jar > SHA256SUMS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: clastor-server
+          path: |
+            app/build/libs/app.jar
+            app/build/libs/SHA256SUMS
+          if-no-files-found: error
+      - if: failure()
+        run: docker compose -f app/docker-compose.yml logs
+      - if: always()
+        run: docker compose -f app/docker-compose.yml down --volumes

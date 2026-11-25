@@ -1,201 +1,72 @@
 # Clastor Distributed Lock Service
 
-Clastor is a modular, extensible, production-grade distributed locking system built around a pluggable backend architecture.  
-It is intentionally designed to be simple, explicit, and transparent — while exposing low-level control and advanced capabilities such as version rotation, per-resource namespaces, Curator/ZooKeeper compatibility, and a clean hexagonal architecture.
+Clastor is an **experimental** Java service for exclusive locks backed by ZooKeeper. The REST service uses the raw ZooKeeper adapter by default. The Curator adapter uses a thread-owned mutex and is suitable for same-thread Java callers.
 
-This repository contains:
+## Quickstart
 
-- A standalone **lock service application** (REST API now, gRPC planned)
-- A pure Java **distributed lock library** decoupled from transport and app layer
-- Pluggable backends (currently **ZooKeeper** and **Curator**)
-- A versioned locking protocol supporting **safe resource-level schema migrations**
-- A clear extension path for alternative backends (etcd, Redis, Consul, SQL-based fences, etc.)
-
----
-
-## Features
-
-### ✔ Per-resource lock namespaces
-Each logical resource (`transaction`, `user`, etc.) has its own isolated lock tree and its own version lifecycle.
-
-Example ZK layout:
-```
-/locks/zk-provider/{resourceKind}/{version}/{resourceId}/lock-00000...
-/locks/zk-provider/{resourceKind}/version
-```
-
-This ensures:
-- independent version rotation per resource
-- no cross-resource interference
-- support for heterogeneous feature sets per resource type
-
----
-
-### ✔ Safe Schema Rotation (Version Migration)
-The system supports fully safe version upgrades for a resource:
-
-1. Create the new version subtree
-2. Wait until **all ephemeral locks** under the old version disappear
-3. Switch the resource’s `version` node
-4. Remove the old subtree
-
-This guarantees **zero risk of double-locking** the same `resourceId` across two versions.
-
----
-
-### ✔ Clean Hexagonal Architecture
-
-**Domain layer:**
-- `DistributedLock`
-- `DistributedLockManager`
-- `DistributedLockVersionAccessor`
-
-**Infrastructure layer (pluggable):**
-- ZooKeeper backend
-- Curator backend
-- Future: etcd / Consul / Redis / JDBC fencing tokens
-
-**Application layer:**
-- Spring Boot REST API
-- gRPC API (planned)
-- Optional deployment as a library (drop-in integration)
-
----
-
-### ✔ REST API (current)
-Examples:
-```
-POST /api/v1/locks/{resource}/{id}/acquire?timeoutMs=5000
-POST /api/v1/locks/{resource}/{id}/release
-GET /api/v1/locks/{resource}/version
-GET /api/v1/locks/held
-```
-
----
-
-### ✔ Fully Local Development Environment
-
-Using docker-compose:
-
-- ZooKeeper
-- ZooNavigator UI
-- 2–N instances of the lock service
-- Shared ZK network for cluster simulation
-
----
-
-## Project Structure
-
-- app/ → Spring Boot application (REST)
-- domain/ → Domain layer (pure Java)
-- adapter/zookeeper/ → Raw ZooKeeper backend
-- adapter/curator/ → Curator backend
-- scripts/ → Admin utilities, including safe rotation tool
-
----
-
-## Getting Started
-
-### 1. Build
+To build and test locally, install JDK 21 and run one of these commands from the repository root.
 
 ```bash
-./gradlew clean build
+sh ./gradlew clean build
 ```
 
-### 2. Run with Docker
+```powershell
+.\gradlew.bat clean build
+```
+
+To start the service and a local ZooKeeper with Docker Compose v2, run:
+
 ```bash
-docker compose up --build
+docker compose -f app/docker-compose.yml up --build -d
 ```
 
-The service will start on multiple ports (8078/8079 by default), connecting to ZooKeeper at zk:2181.
+The image builds the application from source. The REST API is available on `127.0.0.1:8079` after startup. Add `--profile cluster` before `up` to start a second app instance on `127.0.0.1:8078` against the same ZooKeeper. Send release to the instance that handled acquire. Stop the environment with `docker compose -f app/docker-compose.yml down`.
 
----
+## REST API
 
-## Example: Acquiring a Lock
+| Method and path | Result |
+| --- | --- |
+| `POST /api/v1/locks/{resource}/acquire?resourceId={id}&timeoutMs=5000` | `ACQUIRED` or `FAILED` |
+| `POST /api/v1/locks/{resource}/release?resourceId={id}` | `RELEASED` or `NOT_HELD` |
+| `GET /api/v1/locks/{resource}/version` | ZooKeeper path and version for the resource. Initializes absent metadata to `v1`. |
+| `GET /api/v1/locks/held` | Keys held by this service instance as `resource/resourceId`. |
+
+`timeoutMs` defaults to 5000 and controls the acquire wait. `0` checks without waiting for a predecessor. Backend calls may take additional time. Resource names and IDs start with an ASCII letter, digit, underscore or hyphen. Subsequent characters may also include dots. Invalid inputs return HTTP 400. Acquire and release outcomes use HTTP 200 with a `status` field. Backend exceptions surface as HTTP errors.
+
 ```bash
-curl -X POST http://localhost:8079/locks/resource/rsc-123/acquire
+curl -X POST 'http://127.0.0.1:8079/api/v1/locks/jobs/acquire?resourceId=job-1'
+curl 'http://127.0.0.1:8079/api/v1/locks/held'
+curl -X POST 'http://127.0.0.1:8079/api/v1/locks/jobs/release?resourceId=job-1'
 ```
 
+On Windows, use `curl.exe` for these examples.
 
-If successful:
-```json
-{
-    "resource": "resource",
-    "resourceId": "tx-123",
-    "status": "ACQUIRED"
-}
-```
+The first and last requests return `ACQUIRED` and `RELEASED`. The middle request returns `["jobs/job-1"]`. For the complete request and response schema, see [OpenAPI](docs/openapi.yaml).
 
----
+## Configuration
 
-## Safe Version Rotation Script
+| Environment variable | Default |
+| --- | --- |
+| `DISTRIBUTED_LOCK_PROVIDER` | `zookeeper`. `curator` selects the thread-owned adapter. |
+| `CONNECTION_STRING` | `localhost:2181` for the JAR. Compose supplies `zookeeper:2181`. |
+| `ROOT_PATH` | `/locks/zk-provider` or `/locks/curator-provider` |
+| `CONNECTION_TIMEOUT` | `5s` |
+| `SESSION_TIMEOUT` | `10s` |
+| `ACQUIRE_RETRY_DELAY` | `200ms` for raw ZooKeeper |
 
-The repository contains a portable bash script:
-```bash
-scripts/rotate_lock_version.sh {resource-name} {old-version} {new-version}
-```
+Backend-specific variables take precedence over the shared variables. See [application.yml](app/src/main/resources/application.yml).
 
-It performs:
-1. Creation of {resource}/{new-version}
-2. Waiting for draining of {resource}/{old-version}
-3. Switching {resource}/version
-4. Removal of the old subtree
+## Modules and limitations
 
-It strictly guarantees no double-locking across versions.
+- `domain` defines the Java lock contracts. `adapter/zookeeper` and `adapter/curator` implement them. `app` wires one adapter into Spring Boot and stores acquired handles in process memory.
+- The raw ZooKeeper adapter queues ephemeral sequential nodes under `{root}/{resource}/{version}/{resourceId}/lock-…`. Both adapters read version metadata from `{root}/{resource}/version`. Keep each provider on its own tree.
+- Use the ZooKeeper REST workflow in a trusted local environment. The API has no caller authentication or ownership check on release. The held list reflects local handles and can become stale after session loss. Curator release requires the acquiring thread.
+- Live rotation, fencing, and recovery of ambiguous ZooKeeper operations remain open work. The former rotation script was removed because it allowed new acquisitions during a version switch.
 
----
+See the [initial baseline](docs/baseline.md) for the original snapshot and the scope of this pass. The local planning bundle under `task/` contains ADR-0001 and the M0–M5 backlog.
 
-## TODO / Roadmap
+[Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md) · [Governance](docs/governance.md) · [Security policy](SECURITY.md) · [Release notes](docs/release-notes.md)
 
-### 🔧 Fixes & Enhancements (near-term)
-- Add resource mode: (normal, draining) to block new locks during rotation (prevents accidental acquisition while waiting for draining)
-- Expose ZK connectivity and lock metrics via actuator/Prometheus
-- Expand logging: distributed trace ID propagation
+## License
 
-### 🚀 API & Protocol Extensions
-- gRPC API (streaming and unary RPCs)
-- Binary RPC protocol for extremely low latency (Netty direct)
-- Optional async/reactive API for lock acquisition
-
-### 🧩 Backend Plug-ins
-
-Support additional backends:
-- etcd (native lease + revision fencing)
-- Redis RedLock (with optional strong fencing tokens)
-- Consul Sessions
-- PostgreSQL advisory locks (for monolith / hybrid workloads)
-- In-memory cluster backend for tests
-
-Unified backend SPI:
-```text
-DistributedLockManager
-DistributedLockVersionAccessor
-LockSchemaManager (planned)
-```
-
-### 📦 Library Mode
-
-Allow using the lock engine without running the app, via:
-```gradle
-implementation("io.sagittarius.simplelock:distributed-lock-core")
-```
-
-This enables embedding inside other systems (routing engines, schedulers, state machines, etc).
-
-### 🏗 Architectural Improvements
-- Add LockMode (exclusive/shared) — optional
-- Add fencing tokens for linearizable safety under partial failures
-- Add quorum-based mode (if backend supports it — etcd/ZK multi-node ensembles)
-
----
-
-## Contributing
-
-Contributions, proposals, and backend implementations are welcome.
-The repository is intentionally designed to be hackable and easy to extend.
-
---- 
-
-## 📄 License
-
-MIT — see [LICENSE](./LICENSE).
+[MIT](LICENSE)

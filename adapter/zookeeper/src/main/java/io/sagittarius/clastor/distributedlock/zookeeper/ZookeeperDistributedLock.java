@@ -2,28 +2,16 @@ package io.sagittarius.clastor.distributedlock.zookeeper;
 
 import io.sagittarius.clastor.distributedlock.domain.DistributedLock;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
 import java.time.Duration;
-import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /**
- * The algorithm:
- * 1. A directory is created for the resource: /locks/<name>
- * 2. The client creates an ephemeral sequential node .../lock-0000001.
- * 3. Look at all children and sort.
- * 4. If we are first → we took a lock.
- * 5. Otherwise:
- *      - find the previous neighbor
- *      - set a watch on it
- *      - wait for it to be deleted
- *      - then check again to see if we are first.
+ * Queues contenders as ephemeral sequential nodes and watches each contender's predecessor.
  */
-@Slf4j
 @RequiredArgsConstructor
 public class ZookeeperDistributedLock implements DistributedLock {
 
@@ -31,114 +19,100 @@ public class ZookeeperDistributedLock implements DistributedLock {
     private final String locksRootPath;
     private final Duration retryDelay;
 
-    private volatile String currentNodePath;
-    private volatile boolean locked = false;
+    private String currentNodePath;
 
     @Override
-    public boolean tryLock(Duration timeout) throws InterruptedException {
-        long deadline = System.currentTimeMillis() + timeout.toMillis();
-
-        try {
-            ensureLockRoot();
-
-            String nodePrefix = locksRootPath + "/lock-";
-            currentNodePath = client.createEphemeralSequential(nodePrefix);
-
-            while (true) {
-                if (System.currentTimeMillis() > deadline) {
-                    cleanupNodeQuietly();
-                    return false;
-                }
-
-                List<String> children = client.getSortedChildren(locksRootPath);
-                if (children.isEmpty()) {
-                    // it shouldn't be like this, but just in case
-                    log.error("Expected at least one child under path {}, but got empty list", locksRootPath);
-                    throw new IllegalStateException("Empty children under " + locksRootPath);
-                }
-
-                String nodeName = currentNodePath.substring(locksRootPath.length() + 1);
-                int index = children.indexOf(nodeName);
-                if (index == -1) {
-                    cleanupNodeQuietly();
-                    currentNodePath = client.createEphemeralSequential(nodePrefix);
-                    continue;
-                }
-
-                if (index == 0) {
-                    locked = true;
-                    return true;
-                }
-
-                String prevNode = children.get(index - 1);
-                String prevPath = locksRootPath + "/" + prevNode;
-
-                CountDownLatch latch = new CountDownLatch(1);
-                Watcher watcher = event -> {
-                    if (event.getType() == Watcher.Event.EventType.NodeDeleted) {
-                        latch.countDown();
-                    }
-                };
-
-                if (client.getRaw().exists(prevPath, watcher) == null) {
-                    log.debug("Predecessor node {} already gone, rechecking children", prevPath);
-                    continue;
-                }
-
-                long remaining = deadline - System.currentTimeMillis();
-                if (remaining <= 0) {
-                    cleanupNodeQuietly();
-                    log.warn("Timeout while waiting for predecessor {} to be deleted at {}", prevPath, locksRootPath);
-                    return false;
-                }
-
-                long waitTime = Math.min(remaining, retryDelay.toMillis());
-                boolean signaled = latch.await(waitTime, TimeUnit.MILLISECONDS);
-
-                if (signaled) {
-                    log.trace("Predecessor node {} deleted, rechecking lock ownership", prevPath);
-                } else {
-                    log.trace("Timed out ({}) while waiting for predecessor {} at {}, rechecking state",
-                            waitTime, prevPath, locksRootPath);
-                }
-            }
-        } catch (KeeperException e) {
-            cleanupNodeQuietly();
-            throw new RuntimeException("Error while acquiring ZooKeeper lock", e);
+    public synchronized boolean tryLock(Duration timeout) throws InterruptedException {
+        if (timeout.isNegative()) {
+            throw new IllegalArgumentException("Timeout must be non-negative");
         }
+        if (currentNodePath != null) {
+            throw new IllegalStateException("Release the current lock attempt before acquiring again");
+        }
+
+        long timeoutNanos = TimeUnit.MILLISECONDS.toNanos(timeout.toMillis());
+        long start = System.nanoTime();
+        boolean acquired;
+        try {
+            client.ensurePath(locksRootPath);
+            currentNodePath = client.createEphemeralSequential(locksRootPath + "/lock-");
+            acquired = awaitTurn(start, timeoutNanos);
+        } catch (KeeperException e) {
+            var failure = new IllegalStateException("Failed to acquire ZooKeeper lock", e);
+            cleanupAfterFailure(failure);
+            throw failure;
+        } catch (InterruptedException | RuntimeException e) {
+            cleanupAfterFailure(e);
+            throw e;
+        }
+
+        if (!acquired) {
+            unlock();
+        }
+        return acquired;
+    }
+
+    private boolean awaitTurn(long start, long timeoutNanos) throws KeeperException, InterruptedException {
+        String nodeName = currentNodePath.substring(locksRootPath.length() + 1);
+        // A zero timeout allows one check without waiting for a predecessor.
+        do {
+            var children = client.getSortedChildren(locksRootPath);
+            int index = children.indexOf(nodeName);
+            if (index < 0) {
+                throw new IllegalStateException("ZooKeeper lock node disappeared: " + currentNodePath);
+            }
+
+            long remaining = timeoutNanos - (System.nanoTime() - start);
+            if (index == 0) {
+                return timeoutNanos == 0 || remaining > 0;
+            }
+            if (remaining <= 0) {
+                return false;
+            }
+
+            String predecessor = locksRootPath + "/" + children.get(index - 1);
+            CountDownLatch deleted = new CountDownLatch(1);
+            Watcher watcher = event -> {
+                if (event.getType() == Watcher.Event.EventType.NodeDeleted) {
+                    deleted.countDown();
+                }
+            };
+            if (client.getRaw().exists(predecessor, watcher) != null) {
+                remaining = timeoutNanos - (System.nanoTime() - start);
+                deleted.await(Math.min(remaining, retryDelay.toNanos()), TimeUnit.NANOSECONDS);
+            }
+        } while (System.nanoTime() - start < timeoutNanos);
+        return false;
     }
 
     @Override
-    public void unlock() {
-        if (!locked) {
+    public synchronized void unlock() {
+        if (currentNodePath == null) {
             return;
         }
-
         try {
-            if (currentNodePath != null) {
-                client.getRaw().delete(currentNodePath, -1);
-            }
-        }  catch (KeeperException | InterruptedException e){
+            client.getRaw().delete(currentNodePath, -1);
+        } catch (KeeperException.NoNodeException alreadyGone) {
+            // A previous deletion may have succeeded before its response was lost.
+        } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.error("Failed to release ZooKeeper lock", e);
-        } finally {
-            locked = false;
-            currentNodePath = null;
+            throw new IllegalStateException("Interrupted while releasing ZooKeeper lock", e);
+        } catch (KeeperException e) {
+            throw new IllegalStateException("Failed to release ZooKeeper lock", e);
         }
+        currentNodePath = null;
     }
 
-    private void ensureLockRoot() throws KeeperException, InterruptedException {
-        client.ensurePath(locksRootPath);
-    }
-
-    private void cleanupNodeQuietly() {
+    private void cleanupAfterFailure(Exception failure) {
+        boolean interrupted = Thread.interrupted();
         try {
-            if (currentNodePath != null) {
-                client.getRaw().delete(currentNodePath, -1);
-            }
-        } catch (Exception ignored) {
+            unlock();
+        } catch (RuntimeException cleanupFailure) {
+            failure.addSuppressed(cleanupFailure);
         } finally {
-            currentNodePath = null;
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 }

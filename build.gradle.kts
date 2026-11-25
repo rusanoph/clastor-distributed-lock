@@ -6,19 +6,27 @@ allprojects {
 
 subprojects {
     pluginManager.withPlugin("java") {
+        apply(plugin = "checkstyle")
+        dependencyLocking {
+            lockAllConfigurations()
+        }
+        extensions.configure<CheckstyleExtension> {
+            toolVersion = "10.21.4"
+            configFile = rootProject.file("config/checkstyle/checkstyle.xml")
+        }
 
         group = "io.sagittarius.clastor.distributedlock"
-        version = findProperty("version")?.toString() ?: "1.0-SNAPSHOT"
+        version = rootProject.version
 
         dependencies {
             // Lombok
-            "compileOnly"("org.projectlombok:lombok:1.18.34")
-            "annotationProcessor"("org.projectlombok:lombok:1.18.34")
-            "testCompileOnly"("org.projectlombok:lombok:1.18.34")
-            "testAnnotationProcessor"("org.projectlombok:lombok:1.18.34")
+            "compileOnly"(libs.lombok)
+            "annotationProcessor"(libs.lombok)
 
             // JUnit
-            "testImplementation"("org.junit.jupiter:junit-jupiter:5.11.3")
+            "testImplementation"(platform(libs.junit.bom))
+            "testImplementation"(libs.junit.jupiter)
+            "testRuntimeOnly"(libs.junit.platform.launcher)
         }
 
         extensions.configure<JavaPluginExtension> {
@@ -33,26 +41,16 @@ subprojects {
             withSourcesJar()
         }
 
-        tasks.named<Jar>("jar") {
+        tasks.withType<Jar>().configureEach {
+            isPreserveFileTimestamps = false
+            isReproducibleFileOrder = true
             manifest {
                 attributes(
                     "Implementation-Title" to project.name,
                     "Implementation-Version" to project.version
                 )
             }
-        }
-
-        tasks.withType<Jar>().configureEach {
-            val examplePrefixes = setOf(":examples:", ":example:")
-            val isExample = examplePrefixes.any(project.path::startsWith)
-
-            val licenseFile = if (isExample) {
-                "$rootDir/example/LICENSE"
-            } else {
-                "$rootDir/LICENSE"
-            }
-
-            from(licenseFile) {
+            from(rootProject.file("LICENSE")) {
                 into("META-INF")
                 rename { "LICENSE.txt" }
             }
@@ -74,11 +72,3 @@ subprojects {
         }
     }
 }
-
-//configure(subprojects.filter { it.path != ":util" }) {
-//    pluginManager.withPlugin("java") {
-//        dependencies {
-//            implementation(project(":util"))
-//        }
-//    }
-//}

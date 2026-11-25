@@ -1,7 +1,7 @@
 plugins {
     java
-    id("org.springframework.boot") version "4.0.0"
-    id("io.spring.dependency-management") version "1.1.7"
+    alias(libs.plugins.spring.boot)
+    alias(libs.plugins.spring.dependency.management)
 }
 
 dependencies {
@@ -9,7 +9,10 @@ dependencies {
     implementation(project(":adapter:curator"))
     implementation(project(":adapter:zookeeper"))
 
-    implementation("org.springframework.boot:spring-boot-starter-web:4.0.0")
+    implementation(libs.spring.boot.web)
+
+    testImplementation(libs.curator.test)
+    testImplementation(libs.zookeeper)
 }
 
 tasks.getByName<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {
@@ -18,4 +21,8 @@ tasks.getByName<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar
 
 tasks.getByName<Jar>("jar") {
     enabled = false
+}
+
+tasks.processTestResources {
+    from(rootProject.file("docs/openapi.yaml"))
 }

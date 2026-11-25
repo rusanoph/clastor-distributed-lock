@@ -1,0 +1,112 @@
+openapi: 3.0.3
+info:
+  title: Clastor Experimental Lock API
+  version: v1
+  description: Use the ZooKeeper provider in a trusted local environment. Release is local to the instance that granted acquire.
+servers:
+  - url: http://127.0.0.1:8079
+paths:
+  /api/v1/locks/{resource}/acquire:
+    post:
+      operationId: acquire
+      parameters:
+        - $ref: '#/components/parameters/Resource'
+        - $ref: '#/components/parameters/ResourceId'
+        - name: timeoutMs
+          in: query
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+            default: 5000
+      responses:
+        '200':
+          description: ACQUIRED when granted, FAILED if busy or the wait elapses.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LockResult'
+              example: {resource: jobs, resourceId: job-1, status: ACQUIRED}
+        '400':
+          description: Missing or invalid parameters.
+        '500':
+          description: Backend or service error.
+  /api/v1/locks/{resource}/release:
+    post:
+      operationId: release
+      parameters:
+        - $ref: '#/components/parameters/Resource'
+        - $ref: '#/components/parameters/ResourceId'
+      responses:
+        '200':
+          description: RELEASED or NOT_HELD on this service instance.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LockResult'
+              example: {resource: jobs, resourceId: job-1, status: RELEASED}
+        '400':
+          description: Missing or invalid parameters.
+        '500':
+          description: Backend or service error.
+  /api/v1/locks/{resource}/version:
+    get:
+      operationId: getVersion
+      parameters:
+        - $ref: '#/components/parameters/Resource'
+      responses:
+        '200':
+          description: Current version. Absent metadata is initialized to v1.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [path, version]
+                properties:
+                  path: {type: string}
+                  version: {type: string}
+              example: {path: /locks/zk-provider/jobs/version, version: v1}
+        '400':
+          description: Invalid resource.
+        '500':
+          description: Backend or service error, including invalid version metadata.
+  /api/v1/locks/held:
+    get:
+      operationId: listLocalHandles
+      responses:
+        '200':
+          description: Local handles, which may be stale after session loss.
+          content:
+            application/json:
+              schema:
+                type: array
+                uniqueItems: true
+                items: {type: string}
+              example: [jobs/job-1]
+components:
+  parameters:
+    Resource:
+      name: resource
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/PathSegment'
+    ResourceId:
+      name: resourceId
+      in: query
+      required: true
+      schema:
+        $ref: '#/components/schemas/PathSegment'
+  schemas:
+    PathSegment:
+      type: string
+      pattern: '^[A-Za-z0-9_-][A-Za-z0-9._-]*$'
+    LockResult:
+      type: object
+      required: [resource, resourceId, status]
+      properties:
+        resource: {type: string}
+        resourceId: {type: string}
+        status:
+          type: string
+          enum: [ACQUIRED, FAILED, RELEASED, NOT_HELD]

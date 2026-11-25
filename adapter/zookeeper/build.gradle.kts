@@ -3,5 +3,5 @@ plugins {
 }
 
 dependencies {
-    implementation("org.apache.zookeeper:zookeeper:3.9.4")
+    implementation(libs.zookeeper)
 }

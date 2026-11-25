@@ -1,6 +1,10 @@
 package io.sagittarius.clastor.distributedlock.zookeeper;
 
-import org.apache.zookeeper.*;
+import org.apache.zookeeper.CreateMode;
+import org.apache.zookeeper.KeeperException;
+import org.apache.zookeeper.Watcher;
+import org.apache.zookeeper.ZooDefs;
+import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.data.Stat;
 
 import java.io.IOException;
@@ -17,15 +21,25 @@ public class ZkClient implements AutoCloseable {
     public ZkClient(String connectionString, Duration connectionTimeout, Duration sessionTimeout) throws IOException, InterruptedException {
         CountDownLatch connectedLatch = new CountDownLatch(1);
         int sessionTimeoutMs = Math.toIntExact(sessionTimeout.toMillis());
+        int connectionTimeoutMs = Math.toIntExact(connectionTimeout.toMillis());
         this.zooKeeper = new ZooKeeper(connectionString, sessionTimeoutMs, watchedEvent -> {
             if (watchedEvent.getState() == Watcher.Event.KeeperState.SyncConnected) {
                 connectedLatch.countDown();
             }
         });
 
-        int connectionTimeoutMs = Math.toIntExact(connectionTimeout.toMillis());
-        if (!connectedLatch.await(connectionTimeoutMs, TimeUnit.MILLISECONDS)) {
-            throw new IllegalStateException("Failed to connect to ZooKeeper. Timeout exceed " + connectionTimeoutMs + " ms.");
+        try {
+            if (!connectedLatch.await(connectionTimeoutMs, TimeUnit.MILLISECONDS)) {
+                throw new IllegalStateException("ZooKeeper connection timed out after " + connectionTimeoutMs + " ms");
+            }
+        } catch (InterruptedException | RuntimeException failure) {
+            try {
+                zooKeeper.close();
+            } catch (InterruptedException cleanupFailure) {
+                Thread.currentThread().interrupt();
+                failure.addSuppressed(cleanupFailure);
+            }
+            throw failure;
         }
     }
 
@@ -50,7 +64,9 @@ public class ZkClient implements AutoCloseable {
         String[] parts = path.split("/");
         StringBuilder current = new StringBuilder();
         for (String part : parts) {
-            if (part.isBlank()) continue;
+            if (part.isBlank()) {
+                continue;
+            }
 
             current.append('/').append(part);
             String currentPath = current.toString();
