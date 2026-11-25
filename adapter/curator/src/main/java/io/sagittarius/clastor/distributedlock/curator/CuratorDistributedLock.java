@@ -1,14 +1,12 @@
 package io.sagittarius.clastor.distributedlock.curator;
 
 import io.sagittarius.clastor.distributedlock.domain.DistributedLock;
-import lombok.extern.slf4j.Slf4j;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.recipes.locks.InterProcessMutex;
 
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
-@Slf4j
 public class CuratorDistributedLock implements DistributedLock {
 
     private final InterProcessMutex mutex;
@@ -21,8 +19,10 @@ public class CuratorDistributedLock implements DistributedLock {
     public boolean tryLock(Duration timeout) throws InterruptedException {
         try {
             return mutex.acquire(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            throw e;
         } catch (Exception e) {
-            throw new RuntimeException("Failed to acquire Curator lock", e);
+            throw new IllegalStateException("Failed to acquire Curator lock", e);
         }
     }
 
@@ -32,8 +32,11 @@ public class CuratorDistributedLock implements DistributedLock {
             if (mutex.isAcquiredInThisProcess()) {
                 mutex.release();
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while releasing Curator lock", e);
         } catch (Exception e) {
-            log.error("Failed to release Curator lock", e);
+            throw new IllegalStateException("Failed to release Curator lock", e);
         }
     }
 }

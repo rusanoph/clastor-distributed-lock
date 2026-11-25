@@ -1,92 +1,54 @@
-version: '3.9'
+x-lock-app: &lock-app
+  image: ${CLASTOR_IMAGE:-clastor-distributed-lock-app:local}
+  environment:
+    - DISTRIBUTED_LOCK_PROVIDER=${DISTRIBUTED_LOCK_PROVIDER:-zookeeper}
+    - CONNECTION_STRING=${CONNECTION_STRING:-zookeeper:2181}
+    - ROOT_PATH
+    - CONNECTION_TIMEOUT
+    - SESSION_TIMEOUT
+    - ACQUIRE_RETRY_DELAY
+    - DISTRIBUTED_LOCK_ZOOKEEPER_CONNECTION_STRING
+    - DISTRIBUTED_LOCK_ZOOKEEPER_ROOT_PATH
+    - DISTRIBUTED_LOCK_ZOOKEEPER_CONNECTION_TIMEOUT
+    - DISTRIBUTED_LOCK_ZOOKEEPER_SESSION_TIMEOUT
+    - DISTRIBUTED_LOCK_ZOOKEEPER_ACQUIRE_RETRY_DELAY
+    - DISTRIBUTED_LOCK_CURATOR_CONNECTION_STRING
+    - DISTRIBUTED_LOCK_CURATOR_ROOT_PATH
+    - DISTRIBUTED_LOCK_CURATOR_CONNECTION_TIMEOUT
+    - DISTRIBUTED_LOCK_CURATOR_SESSION_TIMEOUT
+  depends_on:
+    zookeeper:
+      condition: service_healthy
 
 services:
   zookeeper:
-    image: zookeeper:3.9
-    container_name: zk
-    restart: unless-stopped
+    image: zookeeper:3.9.4@sha256:dfa9ba46d14bd52bcb3c1dac3ba91f179cf4cebf7ee576e1c2df09c68fc1d30d
     environment:
-      ZOO_MY_ID: 1
-      ZOO_SERVERS: server.1=zk:2888:3888;2181
-      ZOO_TICK_TIME: 2000
-      ZOO_INIT_LIMIT: 10
-      ZOO_SYNC_LIMIT: 5
-      ZOO_STANDALONE_ENABLED: 'true'
-      ZOO_ADMINSERVER_ENABLED: 'true'
-    ports:
-      - '2181:2181'
-      - '8080:8080' # admin-server (optional)
-    networks:
-      - zk-net
-
-  zoonavigator:
-    image: elkozmon/zoonavigator:latest
-    container_name: zoonavigator
-    restart: unless-stopped
-    environment:
-      HTTP_PORT: 9000
-      CONNECTION_ZK_SERVERS: zk:2181
-    ports:
-      - '9000:9000'
-    depends_on:
-      - zookeeper
-    networks:
-      - zk-net
-
-  lock-app-build:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: clastor-distributed-lock-app:latest
+      ZOO_ADMINSERVER_ENABLED: "false"
+    healthcheck:
+      test: ["CMD", "zkServer.sh", "status"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - zk-data:/data
+      - zk-log:/datalog
 
   distributed-lock-app-1:
-    image: clastor-distributed-lock-app:latest
-    container_name: clastor-distributed-lock-app-1
-    restart: unless-stopped
-    environment:
-      # Spring Boot
-      SERVER_PORT: 8080
-      DISTRIBUTED_LOCK_PROVIDER: $DISTRIBUTED_LOCK_PROVIDER  # zookeeper, curator
-      # ZooKeeper provider
-      DISTRIBUTED_LOCK_ZOOKEEPER_CONNECTION_STRING: $DISTRIBUTED_LOCK_ZOOKEEPER_CONNECTION_STRING
-      DISTRIBUTED_LOCK_ZOOKEEPER_ROOT_PATH: $DISTRIBUTED_LOCK_ZOOKEEPER_ROOT_PATH
-      DISTRIBUTED_LOCK_ZOOKEEPER_CONNECTION_TIMEOUT: $DISTRIBUTED_LOCK_ZOOKEEPER_CONNECTION_TIMEOUT
-      DISTRIBUTED_LOCK_ZOOKEEPER_SESSION_TIMEOUT: $DISTRIBUTED_LOCK_ZOOKEEPER_SESSION_TIMEOUT
-      DISTRIBUTED_LOCK_ZOOKEEPER_ACQUIRE_RETRY_DELAY: $DISTRIBUTED_LOCK_ZOOKEEPER_ACQUIRE_RETRY_DELAY
-      # Curator provider
-      DISTRIBUTED_LOCK_CURATOR_CONNECTION_STRING: $DISTRIBUTED_LOCK_CURATOR_CONNECTION_STRING
-      DISTRIBUTED_LOCK_CURATOR_ROOT_PATH: $DISTRIBUTED_LOCK_CURATOR_ROOT_PATH
-      DISTRIBUTED_LOCK_CURATOR_CONNECTION_TIMEOUT: $DISTRIBUTED_LOCK_CURATOR_CONNECTION_TIMEOUT
-      DISTRIBUTED_LOCK_CURATOR_SESSION_TIMEOUT: $DISTRIBUTED_LOCK_CURATOR_SESSION_TIMEOUT
+    <<: *lock-app
+    build:
+      context: ..
+      dockerfile: app/Dockerfile
     ports:
-      - "8079:8080"
-    networks:
-      - zk-net
+      - "127.0.0.1:8079:8080"
 
   distributed-lock-app-2:
-    image: clastor-distributed-lock-app:latest
-    container_name: clastor-distributed-lock-app-2
-    restart: unless-stopped
-    environment:
-      # Spring Boot
-      SERVER_PORT: 8080
-      DISTRIBUTED_LOCK_PROVIDER: $DISTRIBUTED_LOCK_PROVIDER  # zookeeper, curator
-      # ZooKeeper provider
-      DISTRIBUTED_LOCK_ZOOKEEPER_CONNECTION_STRING: $DISTRIBUTED_LOCK_ZOOKEEPER_CONNECTION_STRING
-      DISTRIBUTED_LOCK_ZOOKEEPER_ROOT_PATH: $DISTRIBUTED_LOCK_ZOOKEEPER_ROOT_PATH
-      DISTRIBUTED_LOCK_ZOOKEEPER_CONNECTION_TIMEOUT: $DISTRIBUTED_LOCK_ZOOKEEPER_CONNECTION_TIMEOUT
-      DISTRIBUTED_LOCK_ZOOKEEPER_SESSION_TIMEOUT: $DISTRIBUTED_LOCK_ZOOKEEPER_SESSION_TIMEOUT
-      DISTRIBUTED_LOCK_ZOOKEEPER_ACQUIRE_RETRY_DELAY: $DISTRIBUTED_LOCK_ZOOKEEPER_ACQUIRE_RETRY_DELAY
-      # Curator provider
-      DISTRIBUTED_LOCK_CURATOR_CONNECTION_STRING: $DISTRIBUTED_LOCK_CURATOR_CONNECTION_STRING
-      DISTRIBUTED_LOCK_CURATOR_ROOT_PATH: $DISTRIBUTED_LOCK_CURATOR_ROOT_PATH
-      DISTRIBUTED_LOCK_CURATOR_CONNECTION_TIMEOUT: $DISTRIBUTED_LOCK_CURATOR_CONNECTION_TIMEOUT
-      DISTRIBUTED_LOCK_CURATOR_SESSION_TIMEOUT: $DISTRIBUTED_LOCK_CURATOR_SESSION_TIMEOUT
+    <<: *lock-app
+    pull_policy: never
+    profiles: [cluster]
     ports:
-      - "8078:8080"
-    networks:
-      - zk-net
+      - "127.0.0.1:8078:8080"
 
-networks:
-  zk-net:
-    driver: bridge
+volumes:
+  zk-data:
+  zk-log:

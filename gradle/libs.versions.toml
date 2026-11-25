@@ -1,0 +1,21 @@
+[versions]
+spring-boot = "4.0.0"
+spring-dependency-management = "1.1.7"
+lombok = "1.18.34"
+junit = "6.0.1"
+curator = "5.9.0"
+zookeeper = "3.9.4"
+
+[libraries]
+spring-boot-web = { module = "org.springframework.boot:spring-boot-starter-web" }
+lombok = { module = "org.projectlombok:lombok", version.ref = "lombok" }
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+curator-recipes = { module = "org.apache.curator:curator-recipes", version.ref = "curator" }
+curator-test = { module = "org.apache.curator:curator-test", version.ref = "curator" }
+zookeeper = { module = "org.apache.zookeeper:zookeeper", version.ref = "zookeeper" }
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
+spring-dependency-management = { id = "io.spring.dependency-management", version.ref = "spring-dependency-management" }

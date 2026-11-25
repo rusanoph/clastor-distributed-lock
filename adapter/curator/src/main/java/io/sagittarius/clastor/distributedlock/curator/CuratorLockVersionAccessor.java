@@ -2,13 +2,12 @@ package io.sagittarius.clastor.distributedlock.curator;
 
 import io.sagittarius.clastor.distributedlock.domain.DistributedLockVersionAccessor;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.zookeeper.KeeperException;
+import org.apache.zookeeper.common.PathUtils;
 
 import java.nio.charset.StandardCharsets;
 
-@Slf4j
 @RequiredArgsConstructor
 public class CuratorLockVersionAccessor implements DistributedLockVersionAccessor {
 
@@ -24,33 +23,32 @@ public class CuratorLockVersionAccessor implements DistributedLockVersionAccesso
 
     @Override
     public String currentVersion(String resourceKind) {
+        String path = versionPath(resourceKind);
         try {
-            String resourceRoot = rootPath + "/" + resourceKind;
-            client.create().creatingParentsIfNeeded().forPath(resourceRoot);
-
-            String vp = versionPath(resourceKind);
-
             byte[] data;
             try {
-                data = client.getData().forPath(vp);
-            } catch (KeeperException.NoNodeException e) {
-                log.info("Version node {} not found. Initializing with default version={}", vp, defaultVersion);
-                client.create()
-                        .creatingParentsIfNeeded()
-                        .forPath(vp, defaultVersion.getBytes(StandardCharsets.UTF_8));
-                return defaultVersion;
+                data = client.getData().forPath(path);
+            } catch (KeeperException.NoNodeException missingVersion) {
+                try {
+                    client.create().creatingParentsIfNeeded()
+                            .forPath(path, defaultVersion.getBytes(StandardCharsets.UTF_8));
+                } catch (KeeperException.NodeExistsException alreadyInitialized) {
+                    // Another client initialized the version.
+                }
+                data = client.getData().forPath(path);
             }
 
-            if (data == null || data.length == 0) {
-                log.warn("Version node {} has empty data. Resetting to default version={}", vp, defaultVersion);
-                client.setData().forPath(vp, defaultVersion.getBytes(StandardCharsets.UTF_8));
-                return defaultVersion;
+            String version = data == null ? "" : new String(data, StandardCharsets.UTF_8);
+            if (version.isBlank() || version.contains("/") || version.equals(versionNodeName)) {
+                throw new IllegalArgumentException("Invalid lock version");
             }
-
-            return new String(data, StandardCharsets.UTF_8);
+            PathUtils.validatePath("/" + version);
+            return version;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while reading lock version at " + path, e);
         } catch (Exception e) {
-            log.warn("Failed to read version from {}. Falling back to default version={}", versionPath(resourceKind), defaultVersion, e);
-            return defaultVersion;
+            throw new IllegalStateException("Failed to read lock version at " + path, e);
         }
     }
 }

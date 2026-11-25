@@ -1,0 +1,93 @@
+name: Prepare prerelease
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Verified Git tag on main, for example v0.1.0-alpha.1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify and check out tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$ ]]
+          ref=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG")
+          tag_sha=$(jq -er '.object | select(.type == "tag").sha' <<< "$ref")
+          tag=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_sha")
+          commit=$(jq -er 'select(.verification.verified == true) | .object | select(.type == "commit").sha' <<< "$tag")
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG")" = "$tag_sha"
+          git merge-base --is-ancestor "$commit" origin/main
+          git checkout --detach "$commit"
+          grep -Fx "version=${RELEASE_TAG#v}" gradle.properties
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Build and test
+        run: sh ./gradlew --no-daemon clean build
+      - name: Publish image to GHCR
+        id: image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker buildx create --use --driver docker-container
+          docker buildx build --platform linux/amd64 --file app/Dockerfile \
+            --tag "$image:$RELEASE_TAG" --push --sbom=true --provenance=mode=min \
+            --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" \
+            --label "org.opencontainers.image.version=${RELEASE_TAG#v}" \
+            --metadata-file "$RUNNER_TEMP/image.json" .
+          digest=$(jq -er '."containerimage.digest"' "$RUNNER_TEMP/image.json")
+          echo "reference=$image@$digest" >> "$GITHUB_OUTPUT"
+      - name: Smoke test the published image
+        env:
+          CLASTOR_IMAGE: ${{ steps.image.outputs.reference }}
+        run: |
+          docker pull "$CLASTOR_IMAGE"
+          docker compose -f app/docker-compose.yml up --no-build --wait --wait-timeout 90
+          api=http://127.0.0.1:8079/api/v1/locks
+          curl --fail --silent --show-error -X POST "$api/jobs/acquire?resourceId=release" | jq -e '.status == "ACQUIRED"'
+          curl --fail --silent --show-error -X POST "$api/jobs/release?resourceId=release" | jq -e '.status == "RELEASED"'
+      - name: Prepare assets for GitHub Releases
+        env:
+          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+        run: |
+          mkdir release
+          cp app/build/libs/app.jar release/app.jar
+          jq -n --arg tag "$RELEASE_TAG" --arg commit "$(git rev-parse HEAD)" \
+            --arg image "$IMAGE_REFERENCE" '{tag: $tag, commit: $commit, image: $image}' > release/manifest.json
+          cd release
+          sha256sum app.jar manifest.json > SHA256SUMS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: prerelease-${{ inputs.tag }}
+          path: release/
+          if-no-files-found: error
+      - if: failure()
+        run: docker compose -f app/docker-compose.yml logs
+      - if: always()
+        run: docker compose -f app/docker-compose.yml down --volumes
